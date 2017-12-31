@@ -106,7 +106,7 @@ class Manager
         $host = $this->container['config']->get('swoole_http.server.host');
         $port = $this->container['config']->get('swoole_http.server.port');
 
-        $this->server = new Server($host, $port);
+        $this->server = new Server($host, $port, SWOOLE_SOCK_TCP | SWOOLE_SSL);
     }
 
     /**

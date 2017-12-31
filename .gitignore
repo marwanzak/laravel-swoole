@@ -5,3 +5,4 @@ composer.lock
 # Folders
 vendor
 .idea
+/nbproject/private/
