@@ -7,6 +7,7 @@ use Swoole\Http\Server;
 
 class Manager
 {
+
     const MAC_OSX = 'Darwin';
 
     /**
@@ -106,7 +107,7 @@ class Manager
         $host = $this->container['config']->get('swoole_http.server.host');
         $port = $this->container['config']->get('swoole_http.server.port');
 
-        $this->server = new Server($host, $port, SWOOLE_SOCK_TCP | SWOOLE_SSL);
+        $this->server = new Server($host, $port);
     }
 
     /**
@@ -173,17 +174,22 @@ class Manager
      */
     public function onRequest($swooleRequest, $swooleResponse)
     {
+        $blackfire = new ReactHttpServerHelper();
         $this->container['events']->fire('http.onRequest');
 
         // Reset user-customized providers
         $this->getApplication()->resetProviders();
-
+        $blackfire->start($swooleRequest);
+        $headers = array_merge(['Content-Type' => 'text/plain'], $blackfire->stop());
+        foreach ($headers as $key => $header) {
+            $swooleResponse->header($key, $header);
+        }
         $illuminateRequest = Request::make($swooleRequest)->toIlluminate();
         $illuminateResponse = $this->getApplication()->run($illuminateRequest);
 
         $response = Response::make($illuminateResponse, $swooleResponse);
         // To prevent 'connection[...] is closed' error.
-        if (! $this->server->exist($swooleRequest->fd)) {
+        if (!$this->server->exist($swooleRequest->fd)) {
             return;
         }
         $response->send();
@@ -221,7 +227,7 @@ class Manager
      */
     protected function getApplication()
     {
-        if (! $this->application instanceof Application) {
+        if (!$this->application instanceof Application) {
             $this->createApplication();
         }
 
@@ -306,4 +312,53 @@ class Manager
 
         swoole_set_process_name($name);
     }
+
+}
+
+class ReactHttpServerHelper
+{
+
+    private $probe;
+
+    public function start($request)
+    {
+        $headers = array_change_key_case($request->header, CASE_LOWER);
+
+        // Only enable when the X-Blackfire-Query header is present
+        if (!isset($headers['x-blackfire-query'])) {
+            return false;
+        }
+
+        if ($this->probe !== null) {
+            return false;
+        }
+
+        $this->probe = new \BlackfireProbe($headers['x-blackfire-query']);
+
+        // Stop if it failed
+        if (!$this->probe->enable()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public function stop()
+    {
+        if ($this->probe === null) {
+            return array();
+        }
+
+        if (!$this->probe->isEnabled()) {
+            return array();
+        }
+
+        $this->probe->close();
+
+        $header = explode(':', $this->probe->getResponseLine(), 2);
+        $this->probe = null;
+
+        return array('x-' . $header[0] => $header[1]);
+    }
+
 }
